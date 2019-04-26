@@ -1,8 +1,8 @@
-// CudaArray: header-only library for interfacing with CUDA array-type objects
+// libcua: header-only library for interfacing with CUDA array-type objects
 // Author: True Price <jtprice at cs.unc.edu>
 //
 // BSD License
-// Copyright (C) 2017  The University of North Carolina at Chapel Hill
+// Copyright (C) 2017-2019  The University of North Carolina at Chapel Hill
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,38 +33,23 @@
 // OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 // ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef CUDA_RANDOM_STATE_ARRAY2D_KERNELS_H_
-#define CUDA_RANDOM_STATE_ARRAY2D_KERNELS_H_
+#include "cudaSurface3D.h"
 
-#include "cudaArray2D.h"
+#include "gtest/gtest.h"
 
-#include <curand.h>
-#include <curand_kernel.h>
+#include "cudaArray3DBase_test.h"
 
-namespace cua {
+namespace {
 
-//
-// class-specific kernel functions for the CudaRandonStateArray2D class
-//
+typedef ::testing::Types<
+    cua::CudaSurface2DArray<float>, cua::CudaSurface2DArray<float2>,
+    cua::CudaSurface2DArray<float4>, cua::CudaSurface2DArray<unsigned char>,
+    cua::CudaSurface2DArray<uchar2>, cua::CudaSurface2DArray<uchar4>,
+    cua::CudaSurface2DArray<unsigned int>, cua::CudaSurface2DArray<uint2>,
+    cua::CudaSurface2DArray<uint4> >
+    Types;
 
-//
-// CudaArray2D_init_rand: initialize a matrix of random generators
-//
-template <typename cudaRandomStateArrayClass>
-__global__ void CudaRandomStateArray2D_init_kernel(
-    cudaRandomStateArrayClass mat, const size_t seed) {
-  const int x = blockIdx.x * blockDim.x + threadIdx.x;
-  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+INSTANTIATE_TYPED_TEST_SUITE_P(CudaSurface2DArrayTest, CudaArray3DBaseTest,
+                               Types);
 
-  // the curand documentation says it should be faster (and probably ok) to use
-  // different seeds with sequence number 0
-  if (x < mat.get_width() && y < mat.get_height()) {
-    curandState_t rand_state;
-    curand_init(seed + y * mat.get_width() + x, 0, 0, &rand_state);
-    mat.set(x, y, rand_state);
-  }
-}
-
-}  // namespace cua
-
-#endif  // CUDA_RANDOM_STATE_ARRAY2D_KERNELS_H_
+}  // namespace

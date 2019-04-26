@@ -1,8 +1,8 @@
-// CudaArray: header-only library for interfacing with CUDA array-type objects
+// libcua: header-only library for interfacing with CUDA array-type objects
 // Author: True Price <jtprice at cs.unc.edu>
 //
 // BSD License
-// Copyright (C) 2017  The University of North Carolina at Chapel Hill
+// Copyright (C) 2017-2019  The University of North Carolina at Chapel Hill
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -35,6 +35,8 @@
 
 #ifndef CUDA_SHARED_ARRAY_OBJECT_H_
 #define CUDA_SHARED_ARRAY_OBJECT_H_
+
+#include <memory>
 
 namespace cua {
 
@@ -154,6 +156,8 @@ class CudaSharedSurfaceObject
 
     cudaCreateSurfaceObject(&this->cuda_api_obj, &res_desc);
   }
+
+  ~CudaSharedSurfaceObject() {}
 };
 
 //------------------------------------------------------------------------------

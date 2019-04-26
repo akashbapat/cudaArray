@@ -1,8 +1,8 @@
-// CudaArray: header-only library for interfacing with CUDA array-type objects
+// libcua: header-only library for interfacing with CUDA array-type objects
 // Author: True Price <jtprice at cs.unc.edu>
 //
 // BSD License
-// Copyright (C) 2017  The University of North Carolina at Chapel Hill
+// Copyright (C) 2017-2019  The University of North Carolina at Chapel Hill
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -79,6 +79,7 @@ class CudaSurface3DBase : public CudaArray3DBase<Derived> {
 
   typedef CudaArray3DBase<Derived> Base;
 
+ protected:
   // for convenience, reference base class members directly (they are otherwise
   // not in the current scope because CudaArray2DBase is templated)
   using Base::width_;
@@ -88,6 +89,7 @@ class CudaSurface3DBase : public CudaArray3DBase<Derived> {
   using Base::grid_dim_;
   using Base::stream_;
 
+ public:
   //----------------------------------------------------------------------------
   // constructors and destructor
 
@@ -116,7 +118,24 @@ class CudaSurface3DBase : public CudaArray3DBase<Derived> {
   __host__ __device__
   CudaSurface3DBase(const CudaSurface3DBase<Derived> &other);
 
-  ~CudaSurface3DBase() {}
+  /**
+   * Create a view onto the underlying CUDA memory. This function assumes that
+   * the cropped view region is valid!
+   * @param x x-coordinate for the top left of the view
+   * @param y y-coordinate for the top left of the view
+   * @param z z-coordinate for the top left of the view
+   * @param width width of the view
+   * @param height height of the view
+   * @param depth depth of the view
+   * @return new CudaSurface3D view whose underlying device pointer and size is
+   * aligned with the view
+   */
+  inline Derived View(const size_t x, const size_t y, const size_t z,
+                      const size_t width, const size_t height,
+                      const size_t depth) const {
+    return CudaSurface3DBase<Derived>(x, y, z, width, height, depth, *this)
+        .derived();
+  }
 
   //----------------------------------------------------------------------------
   // array operations
@@ -156,14 +175,14 @@ class CudaSurface3DBase : public CudaArray3DBase<Derived> {
   /**
    * @return the boundary mode for the underlying CUDA Surface object
    */
-  __host__ __device__ inline cudaSurfaceBoundaryMode get_boundary_mode() const {
+  __host__ __device__ inline cudaSurfaceBoundaryMode BoundaryMode() const {
     return boundary_mode_;
   }
 
   /**
    * set the boundary mode for the underlying CUDA Surface object
    */
-  __host__ __device__ inline void set_boundary_mode(
+  __host__ __device__ inline void SetBoundaryMode(
       const cudaSurfaceBoundaryMode boundary_mode) {
     boundary_mode_ = boundary_mode;
   }
@@ -173,9 +192,25 @@ class CudaSurface3DBase : public CudaArray3DBase<Derived> {
   // protected class fields
   //
 
-  CudaSharedSurfaceObject<Scalar> surface;
+  CudaSharedSurfaceObject<Scalar> shared_surface_;
 
   cudaSurfaceBoundaryMode boundary_mode_;
+
+  size_t x_offset_, y_offset_, z_offset_;
+
+ private:
+  /**
+   * Internal constructor used for creating views.
+   * @param x x-coordinate for the top left of the view
+   * @param y y-coordinate for the top left of the view
+   * @param z z-coordinate for the top left of the view
+   * @param width width of the view
+   * @param height height of the view
+   * @param depth depth of the view
+   */
+  CudaSurface3DBase(const size_t x, const size_t y, const size_t z,
+                    const size_t width, const size_t height, const size_t depth,
+                    const CudaSurface3DBase<Derived> &other);
 };
 
 //------------------------------------------------------------------------------
@@ -191,7 +226,11 @@ CudaSurface3DBase<Derived>::CudaSurface3DBase<Derived>(
     const cudaSurfaceBoundaryMode boundary_mode)
     : Base(width, height, depth, block_dim, stream),
       boundary_mode_(boundary_mode),
-      surface(width, height, depth, CudaArrayTraits<Derived>::IS_LAYERED) {}
+      shared_surface_(width, height, depth,
+                      CudaArrayTraits<Derived>::IS_LAYERED),
+      x_offset_(0),
+      y_offset_(0),
+      z_offset_(0) {}
 
 //------------------------------------------------------------------------------
 
@@ -201,12 +240,31 @@ __host__ __device__ CudaSurface3DBase<Derived>::CudaSurface3DBase<Derived>(
     const CudaSurface3DBase<Derived> &other)
     : Base(other),
       boundary_mode_(other.boundary_mode_),
-      surface(other.surface) {}
+      shared_surface_(other.shared_surface_),
+      x_offset_(other.x_offset_),
+      y_offset_(other.y_offset_),
+      z_offset_(other.z_offset_) {}
+
+//------------------------------------------------------------------------------
+
+// host-level private constructor for creating views
+template <typename Derived>
+CudaSurface3DBase<Derived>::CudaSurface3DBase<Derived>(
+    const size_t x, const size_t y, const size_t z, const size_t width,
+    const size_t height, const size_t depth,
+    const CudaSurface3DBase<Derived> &other)
+    : Base(width, height, depth, other.block_dim_, other.stream_),
+      boundary_mode_(other.boundary_mode_),
+      shared_surface_(other.shared_surface_),
+      x_offset_(x + other.x_offset_),
+      y_offset_(y + other.y_offset_),
+      z_offset_(z + other.z_offset_) {}
 
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-CudaSurface3DBase<Derived> CudaSurface3DBase<Derived>::EmptyCopy() const {
+inline CudaSurface3DBase<Derived> CudaSurface3DBase<Derived>::EmptyCopy()
+    const {
   return CudaSurface3DBase<Derived>(width_, height_, depth_, block_dim_,
                                     stream_, boundary_mode_);
 }
@@ -214,11 +272,17 @@ CudaSurface3DBase<Derived> CudaSurface3DBase<Derived>::EmptyCopy() const {
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-CudaSurface3DBase<Derived> &CudaSurface3DBase<Derived>::operator=(
-    const CudaSurface3DBase<Derived>::Scalar *host_array) {
-  cudaMemcpyToArray(surface.dev_array, 0, 0, host_array,
-                    sizeof(Scalar) * width_ * height_ * depth_,
-                    cudaMemcpyHostToDevice);
+inline CudaSurface3DBase<Derived> &CudaSurface3DBase<Derived>::operator=(
+    const Scalar *host_array) {
+  cudaMemcpy3DParms params = {0};
+  params.srcPtr = make_cudaPitchedPtr(const_cast<Scalar *>(host_array),
+                                      width_ * sizeof(Scalar), width_, height_);
+  params.dstArray = shared_surface_.get_dev_array();
+  params.dstPos = make_cudaPos(x_offset_, y_offset_, z_offset_);
+  params.extent = make_cudaExtent(width_, height_, depth_);
+  params.kind = cudaMemcpyHostToDevice;
+
+  cudaMemcpy3D(&params);  // last copy is synchronous
 
   return *this;
 }
@@ -226,7 +290,7 @@ CudaSurface3DBase<Derived> &CudaSurface3DBase<Derived>::operator=(
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-CudaSurface3DBase<Derived> &CudaSurface3DBase<Derived>::operator=(
+inline CudaSurface3DBase<Derived> &CudaSurface3DBase<Derived>::operator=(
     const CudaSurface3DBase<Derived> &other) {
   if (this == &other) {
     return *this;
@@ -234,9 +298,13 @@ CudaSurface3DBase<Derived> &CudaSurface3DBase<Derived>::operator=(
 
   Base::operator=(other);
 
-  surface = other.surface;
+  shared_surface_ = other.shared_surface_;
 
   boundary_mode_ = other.boundary_mode_;
+
+  x_offset_ = other.x_offset_;
+  y_offset_ = other.y_offset_;
+  z_offset_ = other.z_offset_;
 
   return *this;
 }
@@ -244,11 +312,17 @@ CudaSurface3DBase<Derived> &CudaSurface3DBase<Derived>::operator=(
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-void CudaSurface3DBase<Derived>::CopyTo(
+inline void CudaSurface3DBase<Derived>::CopyTo(
     CudaSurface3DBase<Derived>::Scalar *host_array) const {
-  cudaMemcpyFromArray(host_array, surface.dev_array, 0, 0,
-                      sizeof(Scalar) * width_ * height_ * depth_,
-                      cudaMemcpyDeviceToHost);
+  cudaMemcpy3DParms params = {0};
+  params.srcArray = shared_surface_.get_dev_array();
+  params.srcPos = make_cudaPos(x_offset_, y_offset_, z_offset_);
+  params.dstPtr = make_cudaPitchedPtr(const_cast<Scalar *>(host_array),
+                                      width_ * sizeof(Scalar), width_, height_);
+  params.extent = make_cudaExtent(width_, height_, depth_);
+  params.kind = cudaMemcpyDeviceToHost;
+
+  cudaMemcpy3D(&params);
 }
 
 //------------------------------------------------------------------------------
@@ -269,6 +343,8 @@ class CudaSurface2DArray : public CudaSurface3DBase<CudaSurface2DArray<T>> {
   using CudaSurface3DBase<CudaSurface2DArray<T>>::CudaSurface3DBase;
   using CudaSurface3DBase<CudaSurface2DArray<T>>::operator=;
 
+  ~CudaSurface2DArray() {}
+
   /**
    * Device-level function for setting an element in an array
    * @param x first coordinate
@@ -277,8 +353,9 @@ class CudaSurface2DArray : public CudaSurface3DBase<CudaSurface2DArray<T>> {
    * @param v the new value to assign to array(x, y, z)
    */
   __device__ inline void set(const int x, const int y, const int z, const T v) {
-    surf2DLayeredwrite(v, this->surface.get_cuda_api_object(), sizeof(T) * x, y,
-                       z, this->boundary_mode_);
+    surf2DLayeredwrite(v, this->shared_surface_.get_cuda_api_object(),
+                       sizeof(T) * (x + this->x_offset_), y + this->y_offset_,
+                       z + this->z_offset_, this->boundary_mode_);
   }
 
   /**
@@ -289,8 +366,10 @@ class CudaSurface2DArray : public CudaSurface3DBase<CudaSurface2DArray<T>> {
    * @return the value at array(x, y, z)
    */
   __device__ inline T get(const int x, const int y, const int z) const {
-    return surf2DLayeredread<T>(this->surface.get_cuda_api_object(),
-                                sizeof(T) * x, y, z, this->boundary_mode_);
+    return surf2DLayeredread<T>(this->shared_surface_.get_cuda_api_object(),
+                                sizeof(T) * (x + this->x_offset_),
+                                y + this->y_offset_, z + this->z_offset_,
+                                this->boundary_mode_);
   }
 };
 
@@ -308,6 +387,8 @@ class CudaSurface3D : public CudaSurface3DBase<CudaSurface3D<T>> {
   using CudaSurface3DBase<CudaSurface3D<T>>::CudaSurface3DBase;
   using CudaSurface3DBase<CudaSurface3D<T>>::operator=;
 
+  ~CudaSurface3D() {}
+
   /**
    * Device-level function for setting an element in an array
    * @param x first coordinate
@@ -316,8 +397,9 @@ class CudaSurface3D : public CudaSurface3DBase<CudaSurface3D<T>> {
    * @param v the new value to assign to array(x, y, z)
    */
   __device__ inline void set(const int x, const int y, const int z, const T v) {
-    surf3Dwrite(v, this->surface.get_cuda_api_object(), sizeof(T) * x, y, z,
-                this->boundary_mode_);
+    surf3Dwrite(v, this->shared_surface_.get_cuda_api_object(),
+                sizeof(T) * (x + this->x_offset_), y + this->y_offset_,
+                z + this->z_offset_, this->boundary_mode_);
   }
 
   /**
@@ -328,8 +410,9 @@ class CudaSurface3D : public CudaSurface3DBase<CudaSurface3D<T>> {
    * @return the value at array(x, y, z)
    */
   __device__ inline T get(const int x, const int y, const int z) const {
-    return surf3Dread<T>(this->surface.get_cuda_api_object(), sizeof(T) * x, y,
-                         z, this->boundary_mode_);
+    return surf3Dread<T>(this->shared_surface_.get_cuda_api_object(),
+                         sizeof(T) * (x + this->x_offset_), y + this->y_offset_,
+                         z + this->z_offset_, this->boundary_mode_);
   }
 };
 
@@ -342,12 +425,14 @@ class CudaSurface3D : public CudaSurface3DBase<CudaSurface3D<T>> {
 template <typename T>
 struct CudaArrayTraits<CudaSurface2DArray<T>> {
   typedef T Scalar;
+  typedef bool Mutable;
   static const bool IS_LAYERED = true;
 };
 
 template <typename T>
 struct CudaArrayTraits<CudaSurface3D<T>> {
   typedef T Scalar;
+  typedef bool Mutable;
   static const bool IS_LAYERED = false;
 };
 

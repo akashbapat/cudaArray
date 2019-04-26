@@ -1,8 +1,8 @@
-// CudaArray: header-only library for interfacing with CUDA array-type objects
+// libcua: header-only library for interfacing with CUDA array-type objects
 // Author: True Price <jtprice at cs.unc.edu>
 //
 // BSD License
-// Copyright (C) 2017  The University of North Carolina at Chapel Hill
+// Copyright (C) 2017-2019  The University of North Carolina at Chapel Hill
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -61,8 +61,6 @@ namespace cua {
  *       out.set(x, y, in.get(x, y));
  *     }
  *
- * TODO (True): this class needs explicit compiler error messages when using
- *   set(), etc.
  * TODO (True): mipmaps, etc. would be useful, as well as texture-coordinate
  *   lookups, etc.
  */
@@ -76,6 +74,7 @@ class CudaTexture2D : public CudaArray2DBase<CudaTexture2D<T>> {
 
   typedef CudaArray2DBase<CudaTexture2D<T>> Base;
 
+ protected:
   // for convenience, reference base class members directly (they are otherwise
   // not in the current scope because CudaArray2DBase is templated)
   using Base::width_;
@@ -84,6 +83,7 @@ class CudaTexture2D : public CudaArray2DBase<CudaTexture2D<T>> {
   using Base::grid_dim_;
   using Base::stream_;
 
+ public:
   //----------------------------------------------------------------------------
   // constructors and destructor
 
@@ -102,6 +102,7 @@ class CudaTexture2D : public CudaArray2DBase<CudaTexture2D<T>> {
    * @param stream CUDA stream for this array object
    *   extents of the array
    */
+  // TODO (True): normalizedCoords
   CudaTexture2D(
       const size_t width, const size_t height,
       const cudaTextureFilterMode filter_mode = cudaFilterModePoint,
@@ -227,22 +228,8 @@ CudaTexture2D<T>::CudaTexture2D<T>(const CudaTexture2D<T> &other)
 //------------------------------------------------------------------------------
 
 template <typename T>
-CudaTexture2D<T> CudaTexture2D<T>::EmptyCopy() const {
-  return CudaTexture2D<T>(width_, height_, block_dim_, stream_);
-}
-
-//------------------------------------------------------------------------------
-
-template <typename T>
-CudaTexture2D<T> CudaTexture2D<T>::EmptyFlippedCopy() const {
-  return CudaTexture2D<T>(height_, width_, dim3(block_dim_.y, block_dim_.x),
-                          stream_);
-}
-
-//------------------------------------------------------------------------------
-
-template <typename T>
-CudaTexture2D<T> &CudaTexture2D<T>::operator=(const CudaTexture2D<T> &other) {
+inline CudaTexture2D<T> &CudaTexture2D<T>::operator=(
+    const CudaTexture2D<T> &other) {
   if (this == &other) {
     return *this;
   }
@@ -257,7 +244,7 @@ CudaTexture2D<T> &CudaTexture2D<T>::operator=(const CudaTexture2D<T> &other) {
 //------------------------------------------------------------------------------
 
 template <typename T>
-CudaTexture2D<T> &CudaTexture2D<T>::operator=(const T *host_array) {
+inline CudaTexture2D<T> &CudaTexture2D<T>::operator=(const T *host_array) {
   cudaMemcpyToArray(shared_texture_.get_dev_array(), 0, 0, host_array,
                     sizeof(T) * width_ * height_, cudaMemcpyHostToDevice);
 
@@ -267,7 +254,7 @@ CudaTexture2D<T> &CudaTexture2D<T>::operator=(const T *host_array) {
 //------------------------------------------------------------------------------
 
 template <typename T>
-void CudaTexture2D<T>::CopyTo(T *host_array) const {
+inline void CudaTexture2D<T>::CopyTo(T *host_array) const {
   cudaMemcpyFromArray(host_array, shared_texture_.get_dev_array(), 0, 0,
                       sizeof(T) * width_ * height_, cudaMemcpyDeviceToHost);
 }

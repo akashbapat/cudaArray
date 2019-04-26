@@ -1,8 +1,8 @@
-// CudaArray: header-only library for interfacing with CUDA array-type objects
+// libcua: header-only library for interfacing with CUDA array-type objects
 // Author: True Price <jtprice at cs.unc.edu>
 //
 // BSD License
-// Copyright (C) 2017  The University of North Carolina at Chapel Hill
+// Copyright (C) 2017-2019  The University of North Carolina at Chapel Hill
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -48,29 +48,44 @@ namespace cua {
 template <typename Derived>
 struct CudaArrayTraits;  // forward declaration
 
+// Convenience macro for using SFINAE to disable operations given non-writable
+// subclasses.
+#define ENABLE_IF_MUTABLE                       \
+  template <class C = CudaArrayTraits<Derived>, \
+            typename C::Mutable is_mutable = true>
+// This is used in out-of-class definitions.
+#define ENABLE_IF_MUTABLE_IMPL \
+  template <class C, typename C::Mutable is_mutable>
+
 /**
  * @class CudaArray2DBase
  * @brief Base class for all 2D CudaArray-type objects.
  *
  * This class includes implementations for Copy, Transpose, Flip, etc.
- * All derived classes need to define the following members:
+ * All derived classes need to define the following methods:
  *
- * 1. copy constructor on host *and* device; use `#ifndef __CUDA_ARCH__` to
+ * -  copy constructor on host *and* device; use `#ifndef __CUDA_ARCH__` to
  *    perform host-specific instructions
  *    - `__host__ __device__ Derived(const Derived &other);`
- * 2. EmptyCopy(): to create a new array of the same size
+ * -  get(): read from array position
+ *    - `__device__ inline Scalar get(const size_t x, const size_t y) const;`
+ *
+ * These methods are suggested for getting data to/from the CPU:
+ *
+ * -  operator=(): suggested to have this for getting data from the CPU
+ *   - `Derived &operator=(const Scalar *host_array);`
+ * -  CopyTo(): suggested to have this for getting data to the CPU
+ *    - `void CopyTo(Scalar *host_array) const;`
+ *
+ * These methods are necessary for derived classes that are read-write:
+ *
+ * -  EmptyCopy(): to create a new array of the same size
  *    - `Derived EmptyCopy() const;`
- * 3. EmptyFlippedCopy(): create a new array with flipped width/height
+ * -  EmptyFlippedCopy(): create a new array with flipped width/height
  *    - `Derived EmptyFlippedCopy() const;`
- * 4. set(): write to array position (optional for readonly subclasses)
+ * -  set(): write to array position (optional for readonly subclasses)
  *    - `__device__
  *       inline void set(const size_t x, const size_t y, Scalar value);`
- * 5. get(): read from array position
- *    - `__device__ inline Scalar get(const size_t x, const size_t y) const;`
- * 6. operator=(): suggested to have this for getting data from the CPU
- *   - `Derived &operator=(const Scalar *host_array);`
- * 7. CopyTo(): suggested to have this for getting data to the CPU
- *    - `void CopyTo(Scalar *host_array) const;`
  *
  * Also, any derived class will need to separately declare a CudaArrayTraits
  * struct instantiation with a "Scalar" member, e.g.,
@@ -78,6 +93,7 @@ struct CudaArrayTraits;  // forward declaration
  *     template <typename T>
  *     struct CudaArrayTraits<Derived<T>> {
  *       typedef T Scalar;
+ *       typedef bool Mutable;  // defined for read-write derived classes
  *     };
  */
 template <typename Derived>
@@ -155,6 +171,8 @@ class CudaArray2DBase {
   /**
    * @return a new copy of the current array.
    */
+  // TODO (True): specialize in subclasses when type is not mutable?
+  ENABLE_IF_MUTABLE
   inline Derived Copy() const {
     Derived result = derived().EmptyCopy();
     Copy(result);
@@ -164,6 +182,7 @@ class CudaArray2DBase {
   /**
    * @return a new copy of the current array, flipped along the horizontal axis.
    */
+  ENABLE_IF_MUTABLE
   inline Derived FlipLR() const {
     Derived result = derived().EmptyCopy();
     FlipLR(result);
@@ -173,6 +192,7 @@ class CudaArray2DBase {
   /**
    * @return a new copy of the current array, flipped along the vertical axis.
    */
+  ENABLE_IF_MUTABLE
   inline Derived FlipUD() const {
     Derived result = derived().EmptyCopy();
     FlipUD(result);
@@ -182,6 +202,7 @@ class CudaArray2DBase {
   /**
    * @return a new copy of the current array, rotated 180 degrees.
    */
+  ENABLE_IF_MUTABLE
   inline Derived Rot180() const {
     Derived result = derived().EmptyCopy();
     Rot180(result);
@@ -192,6 +213,7 @@ class CudaArray2DBase {
    * @return a new copy of the current array, rotated 90 degrees
    * counterclockwise.
    */
+  ENABLE_IF_MUTABLE
   inline Derived Rot90_CCW() const {
     Derived result = derived().EmptyFlippedCopy();
     Rot90_CCW(result);
@@ -201,6 +223,7 @@ class CudaArray2DBase {
   /**
    * @return a new copy of the current array, rotated 90 degrees clockwise.
    */
+  ENABLE_IF_MUTABLE
   inline Derived Rot90_CW() const {
     Derived result = derived().EmptyFlippedCopy();
     Rot90_CW(result);
@@ -210,6 +233,7 @@ class CudaArray2DBase {
   /**
    * @return a new transposed copy of the current array.
    */
+  ENABLE_IF_MUTABLE
   inline Derived Transpose() const {
     Derived result = derived().EmptyFlippedCopy();
     Transpose(result);
@@ -224,7 +248,8 @@ class CudaArray2DBase {
    * @ param other output array
    * @return other
    */
-  template <typename OtherDerived>  // allow copies to other scalar types
+  template <typename OtherDerived,
+            typename CudaArrayTraits<OtherDerived>::Mutable is_mutable = true>
   OtherDerived &Copy(OtherDerived &other) const;
 
   /**
@@ -232,6 +257,7 @@ class CudaArray2DBase {
    * @param other output array
    * @return other
    */
+  ENABLE_IF_MUTABLE
   Derived &FlipLR(Derived &other) const;
 
   /**
@@ -239,6 +265,7 @@ class CudaArray2DBase {
    * @param other output array
    * @return other
    */
+  ENABLE_IF_MUTABLE
   Derived &FlipUD(Derived &other) const;
 
   /**
@@ -246,6 +273,7 @@ class CudaArray2DBase {
    * @param other output array
    * @return other
    */
+  ENABLE_IF_MUTABLE
   Derived &Rot180(Derived &other) const;
 
   /**
@@ -253,6 +281,7 @@ class CudaArray2DBase {
    * @param other output array
    * @return other
    */
+  ENABLE_IF_MUTABLE
   Derived &Rot90_CCW(Derived &other) const;
 
   /**
@@ -260,6 +289,7 @@ class CudaArray2DBase {
    * @param other output array
    * @return other
    */
+  ENABLE_IF_MUTABLE
   Derived &Rot90_CW(Derived &other) const;
 
   /**
@@ -267,57 +297,48 @@ class CudaArray2DBase {
    * @param other output array
    * @return other
    */
+  ENABLE_IF_MUTABLE
   Derived &Transpose(Derived &other) const;
 
   /**
    * Fill the array with a constant value.
    * @param value every element in the array is set to value
    */
+  ENABLE_IF_MUTABLE
   inline void Fill(const Scalar value) {
-    CudaArray2DBase_fill_kernel<<<grid_dim_, block_dim_, 0, stream_>>>(
+    kernel::CudaArray2DBaseFill<<<grid_dim_, block_dim_, 0, stream_>>>(
         derived(), value);
   }
 
   /**
-   * Fill the array with uniform (quasi-)random values in the range (0,1].
-   * TODO (True): the interface for this will likely change in the future.
-   */
-  template <typename curandStateArrayClass>
-  inline void FillRandom(curandStateArrayClass rand_state) {
-    FillRandom(rand_state, [] __device__(curandState_t * state) {
-      return (Scalar)curand_uniform(state);
-    });
-  }
-
-  /**
    * Fill the array with random values using the given random function.
-   * TODO (True): the interface for this will likely change in the future.
-   * curandStateArrayType: intended to be CudaRandomStateArray
+   * @param rand_state should have one element per block of this array
    * @param func random function such as curand_normal with signature
    *   `T func(curandState_t *)`
    */
-  template <typename curandStateArrayClass, typename RandomFunction>
-  void FillRandom(curandStateArrayClass rand_state, RandomFunction func);
+  template <typename CurandStateArrayType, typename RandomFunction,
+            class C = CudaArrayTraits<Derived>,
+            typename C::Mutable is_mutable = true>
+  void FillRandom(CurandStateArrayType rand_state, RandomFunction func);
 
   //----------------------------------------------------------------------------
   // getters/setters
 
-  __host__ __device__ inline size_t get_width() const { return width_; }
-  __host__ __device__ inline size_t get_height() const { return height_; }
+  __host__ __device__ inline size_t Width() const { return width_; }
+  __host__ __device__ inline size_t Height() const { return height_; }
+  __host__ __device__ inline size_t Size() const { return width_ * height_; }
 
-  __host__ __device__ inline dim3 get_block_dim() const { return block_dim_; }
-  __host__ __device__ inline dim3 get_grid_dim() const { return grid_dim_; }
+  __host__ __device__ inline dim3 BlockDim() const { return block_dim_; }
+  __host__ __device__ inline dim3 GridDim() const { return grid_dim_; }
 
-  inline void set_block_dim(const dim3 block_dim) {
+  inline void SetBlockDim(const dim3 block_dim) {
     block_dim_ = block_dim;
-    grid_dim_ = dim3(
-        static_cast<int>(std::ceil(static_cast<float>(width_)) / block_dim_.x),
-        static_cast<int>(std::ceil(static_cast<float>(height_)) /
-                         block_dim_.y));
+    grid_dim_ = dim3((width_ + block_dim.x - 1) / block_dim_.x,
+                     (width_ + block_dim.y - 1) / block_dim_.y, 1);
   }
 
-  inline cudaStream_t get_stream() const { return stream_; }
-  inline void set_stream(const cudaStream_t stream) { stream_ = stream; }
+  inline cudaStream_t Stream() const { return stream_; }
+  inline void SetStream(const cudaStream_t stream) { stream_ = stream; }
 
   /**
    * Host-level function for setting the value of a single array element.
@@ -325,12 +346,13 @@ class CudaArray2DBase {
    * @param y second coordinate, i.e., the row index in a row-major array
    * @param v the new value to assign to array(x, y)
    */
+  ENABLE_IF_MUTABLE
   inline void SetValue(const size_t x, const size_t y, const Scalar value) {
     if (x >= width_ || y >= height_) {
       throw "Error: CudaArray2DBase Address out of bounds in SetValue().";
     }
 
-    CudaArray2DBase_set_kernel<<<1, 1, 0, stream_>>>(derived(), value, x, y);
+    kernel::CudaArray2DBaseSet<<<1, 1, 0, stream_>>>(derived(), value, x, y);
   }
 
   /**
@@ -346,7 +368,7 @@ class CudaArray2DBase {
 
     Scalar value, *dev_value;
     cudaMalloc(&dev_value, sizeof(Scalar));
-    CudaArray2DBase_get_kernel<<<1, 1, 0, stream_>>>(derived(), dev_value, x,
+    kernel::CudaArray2DBaseGet<<<1, 1, 0, stream_>>>(derived(), dev_value, x,
                                                      y);
     cudaMemcpy(&value, dev_value, sizeof(Scalar), cudaMemcpyDeviceToHost);
     cudaFree(dev_value);
@@ -371,19 +393,21 @@ class CudaArray2DBase {
    * @param shared_mem_bytes if `op()` uses shared memory, the size of the
    *   shared memory space required
    */
-  template <class Function>
-  inline void apply_op(Function op, const size_t shared_mem_bytes = 0) {
-    CudaArray2DBase_apply_op_kernel<<<grid_dim_, block_dim_, shared_mem_bytes,
-                                      stream_>>>(derived(), op);
+  template <class Function, class C = CudaArrayTraits<Derived>,
+            typename C::Mutable is_mutable = true>
+  inline void ApplyOp(Function op, const size_t shared_mem_bytes = 0) {
+    kernel::CudaArray2DBaseApplyOp<<<grid_dim_, block_dim_, shared_mem_bytes,
+                                     stream_>>>(derived(), op);
   }
 
   /**
    * Element-wise addition.
    * @param value value to add to each array element
    */
+  ENABLE_IF_MUTABLE
   inline void operator+=(const Scalar value) {
     Derived &tmp = derived();
-    CudaArray2DBase_apply_op_kernel<<<grid_dim_, block_dim_, 0, stream_>>>(
+    kernel::CudaArray2DBaseApplyOp<<<grid_dim_, block_dim_, 0, stream_>>>(
         tmp, [tmp, value] __device__(const size_t x, const size_t y) {
           return tmp.get(x, y) + value;
         });
@@ -393,15 +417,23 @@ class CudaArray2DBase {
    * Element-wise subtraction.
    * @param value value to subtract from each array element
    */
-  inline void operator-=(const Scalar value) { operator+=(-value); }
+  ENABLE_IF_MUTABLE
+  inline void operator-=(const Scalar value) {
+    Derived &tmp = derived();
+    kernel::CudaArray2DBaseApplyOp<<<grid_dim_, block_dim_, 0, stream_>>>(
+        tmp, [tmp, value] __device__(const size_t x, const size_t y) {
+          return tmp.get(x, y) - value;
+        });
+  }
 
   /**
    * Element-wise multiplication.
    * @param value value by which to multiply each array element
    */
+  ENABLE_IF_MUTABLE
   inline void operator*=(const Scalar value) {
     Derived &tmp = derived();
-    CudaArray2DBase_apply_op_kernel<<<grid_dim_, block_dim_, 0, stream_>>>(
+    kernel::CudaArray2DBaseApplyOp<<<grid_dim_, block_dim_, 0, stream_>>>(
         tmp, [tmp, value] __device__(const size_t x, const size_t y) {
           return tmp.get(x, y) * value;
         });
@@ -411,7 +443,14 @@ class CudaArray2DBase {
    * Element-wise division.
    * @param value value by which to divide each array element.
    */
-  inline void operator/=(const Scalar value) { operator*=(Scalar(1.) / value); }
+  ENABLE_IF_MUTABLE
+  inline void operator/=(const Scalar value) {
+    Derived &tmp = derived();
+    kernel::CudaArray2DBaseApplyOp<<<grid_dim_, block_dim_, 0, stream_>>>(
+        tmp, [tmp, value] __device__(const size_t x, const size_t y) {
+          return tmp.get(x, y) / value;
+        });
+  }
 
   //----------------------------------------------------------------------------
   // protected class methods and fields
@@ -451,13 +490,13 @@ CudaArray2DBase<Derived>::CudaArray2DBase<Derived>(const size_t width,
                                                    const dim3 block_dim,
                                                    const cudaStream_t stream)
     : width_(width), height_(height), stream_(stream) {
-  set_block_dim(block_dim);
+  SetBlockDim(block_dim);
 }
 
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-CudaArray2DBase<Derived> &CudaArray2DBase<Derived>::operator=(
+inline CudaArray2DBase<Derived> &CudaArray2DBase<Derived>::operator=(
     const CudaArray2DBase<Derived> &other) {
   if (this == &other) {
     return *this;
@@ -476,14 +515,15 @@ CudaArray2DBase<Derived> &CudaArray2DBase<Derived>::operator=(
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-template <typename OtherDerived>
-OtherDerived &CudaArray2DBase<Derived>::Copy(OtherDerived &other) const {
+template <typename OtherDerived,
+          typename CudaArrayTraits<OtherDerived>::Mutable is_mutable>
+inline OtherDerived &CudaArray2DBase<Derived>::Copy(OtherDerived &other) const {
   if (this != &other) {
     if (width_ != other.width_ || height_ != other.height_) {
       other = derived().EmptyCopy();
     }
 
-    CudaArray2DBase_copy_kernel<<<grid_dim_, block_dim_>>>(derived(), other);
+    kernel::CudaArray2DBaseCopy<<<grid_dim_, block_dim_>>>(derived(), other);
   }
 
   return other;
@@ -492,18 +532,15 @@ OtherDerived &CudaArray2DBase<Derived>::Copy(OtherDerived &other) const {
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-template <typename curandStateArrayClass, typename RandomFunction>
-void CudaArray2DBase<Derived>::FillRandom(curandStateArrayClass rand_state,
-                                          RandomFunction func) {
-  const dim3 block_dim = dim3(CudaArray2DBase<Derived>::TILE_SIZE,
-                              CudaArray2DBase<Derived>::BLOCK_ROWS);
-  const dim3 grid_dim =
-      dim3(static_cast<int>(std::ceil(static_cast<float>(width_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE),
-           static_cast<int>(std::ceil(static_cast<float>(height_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE));
+template <typename CurandStateArrayType, typename RandomFunction, class C,
+          typename C::Mutable is_mutable>
+inline void CudaArray2DBase<Derived>::FillRandom(
+    CurandStateArrayType rand_state, RandomFunction func) {
+  const dim3 block_dim(TILE_SIZE, BLOCK_ROWS);
+  const dim3 grid_dim((width_ + TILE_SIZE - 1) / TILE_SIZE,
+                      (height_ + TILE_SIZE - 1) / TILE_SIZE);
 
-  CudaArray2DBase_fillRandom_kernel<<<grid_dim, block_dim, 0, stream_>>>(
+  kernel::CudaArray2DBaseFillRandom<<<grid_dim, block_dim, 0, stream_>>>(
       rand_state, derived(), func);
 }
 
@@ -514,16 +551,13 @@ void CudaArray2DBase<Derived>::FillRandom(curandStateArrayClass rand_state,
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-Derived &CudaArray2DBase<Derived>::FlipLR(Derived &other) const {
-  const dim3 block_dim = dim3(CudaArray2DBase<Derived>::TILE_SIZE,
-                              CudaArray2DBase<Derived>::BLOCK_ROWS);
-  const dim3 grid_dim =
-      dim3(static_cast<int>(std::ceil(static_cast<float>(width_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE),
-           static_cast<int>(std::ceil(static_cast<float>(height_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE));
+ENABLE_IF_MUTABLE_IMPL inline Derived &CudaArray2DBase<Derived>::FlipLR(
+    Derived &other) const {
+  const dim3 block_dim(TILE_SIZE, BLOCK_ROWS);
+  const dim3 grid_dim((width_ + TILE_SIZE - 1) / TILE_SIZE,
+                      (height_ + TILE_SIZE - 1) / TILE_SIZE);
 
-  CudaArray2DBase_fliplr_kernel<<<grid_dim, block_dim, 0, stream_>>>(derived(),
+  kernel::CudaArray2DBaseFlipLR<<<grid_dim, block_dim, 0, stream_>>>(derived(),
                                                                      other);
 
   return other;
@@ -532,16 +566,13 @@ Derived &CudaArray2DBase<Derived>::FlipLR(Derived &other) const {
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-Derived &CudaArray2DBase<Derived>::FlipUD(Derived &other) const {
-  const dim3 block_dim = dim3(CudaArray2DBase<Derived>::TILE_SIZE,
-                              CudaArray2DBase<Derived>::BLOCK_ROWS);
-  const dim3 grid_dim =
-      dim3(static_cast<int>(std::ceil(static_cast<float>(width_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE),
-           static_cast<int>(std::ceil(static_cast<float>(height_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE));
+ENABLE_IF_MUTABLE_IMPL inline Derived &CudaArray2DBase<Derived>::FlipUD(
+    Derived &other) const {
+  const dim3 block_dim(TILE_SIZE, BLOCK_ROWS);
+  const dim3 grid_dim((width_ + TILE_SIZE - 1) / TILE_SIZE,
+                      (height_ + TILE_SIZE - 1) / TILE_SIZE);
 
-  CudaArray2DBase_flipud_kernel<<<grid_dim, block_dim, 0, stream_>>>(derived(),
+  kernel::CudaArray2DBaseFlipUD<<<grid_dim, block_dim, 0, stream_>>>(derived(),
                                                                      other);
 
   return other;
@@ -550,19 +581,16 @@ Derived &CudaArray2DBase<Derived>::FlipUD(Derived &other) const {
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-Derived &CudaArray2DBase<Derived>::Rot180(Derived &other) const {
+ENABLE_IF_MUTABLE_IMPL inline Derived &CudaArray2DBase<Derived>::Rot180(
+    Derived &other) const {
   // compute down columns; the width should be equal to the width of a CUDA
   // thread warp; the number of rows that each block covers is equal to
   // CudaArray2DBase<Derived>::BLOCK_ROWS
-  const dim3 block_dim = dim3(CudaArray2DBase<Derived>::TILE_SIZE,
-                              CudaArray2DBase<Derived>::BLOCK_ROWS);
-  const dim3 grid_dim =
-      dim3(static_cast<int>(std::ceil(static_cast<float>(width_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE),
-           static_cast<int>(std::ceil(static_cast<float>(height_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE));
+  const dim3 block_dim(TILE_SIZE, BLOCK_ROWS);
+  const dim3 grid_dim((width_ + TILE_SIZE - 1) / TILE_SIZE,
+                      (height_ + TILE_SIZE - 1) / TILE_SIZE);
 
-  CudaArray2DBase_rot180_kernel<<<grid_dim, block_dim, 0, stream_>>>(derived(),
+  kernel::CudaArray2DBaseRot180<<<grid_dim, block_dim, 0, stream_>>>(derived(),
                                                                      other);
 
   return other;
@@ -571,22 +599,17 @@ Derived &CudaArray2DBase<Derived>::Rot180(Derived &other) const {
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-Derived &CudaArray2DBase<Derived>::Rot90_CCW(Derived &other) const {
+ENABLE_IF_MUTABLE_IMPL inline Derived &CudaArray2DBase<Derived>::Rot90_CCW(
+    Derived &other) const {
   // compute down columns; the width should be equal to the width of a CUDA
   // thread warp; the number of rows that each block covers is equal to
   // CudaArray2DBase<Derived>::BLOCK_ROWS
-  const dim3 block_dim = dim3(CudaArray2DBase<Derived>::TILE_SIZE,
-                              CudaArray2DBase<Derived>::BLOCK_ROWS);
-  const dim3 grid_dim =
-      dim3(static_cast<int>(std::ceil(static_cast<float>(width_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE),
-           static_cast<int>(std::ceil(static_cast<float>(height_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE));
-  const size_t shm_size = CudaArray2DBase<Derived>::TILE_SIZE *
-                          (CudaArray2DBase<Derived>::TILE_SIZE) *
-                          sizeof(Scalar);
+  const dim3 block_dim(TILE_SIZE, BLOCK_ROWS);
+  const dim3 grid_dim((width_ + TILE_SIZE - 1) / TILE_SIZE,
+                      (height_ + TILE_SIZE - 1) / TILE_SIZE);
+  const size_t shm_size = TILE_SIZE * TILE_SIZE * sizeof(Scalar);
 
-  CudaArray2DBase_rot90_CCW_kernel<<<grid_dim, block_dim, shm_size, stream_>>>(
+  kernel::CudaArray2DBaseRot90_CCW<<<grid_dim, block_dim, shm_size, stream_>>>(
       derived(), other);
 
   return other;
@@ -595,22 +618,17 @@ Derived &CudaArray2DBase<Derived>::Rot90_CCW(Derived &other) const {
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-Derived &CudaArray2DBase<Derived>::Rot90_CW(Derived &other) const {
+ENABLE_IF_MUTABLE_IMPL inline Derived &CudaArray2DBase<Derived>::Rot90_CW(
+    Derived &other) const {
   // compute down columns; the width should be equal to the width of a CUDA
   // thread warp; the number of rows that each block covers is equal to
   // CudaArray2DBase<Derived>::BLOCK_ROWS
-  const dim3 block_dim = dim3(CudaArray2DBase<Derived>::TILE_SIZE,
-                              CudaArray2DBase<Derived>::BLOCK_ROWS);
-  const dim3 grid_dim =
-      dim3(static_cast<int>(std::ceil(static_cast<float>(width_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE),
-           static_cast<int>(std::ceil(static_cast<float>(height_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE));
-  const size_t shm_size = CudaArray2DBase<Derived>::TILE_SIZE *
-                          (CudaArray2DBase<Derived>::TILE_SIZE) *
-                          sizeof(Scalar);
+  const dim3 block_dim = dim3(TILE_SIZE, BLOCK_ROWS);
+  const dim3 grid_dim((width_ + TILE_SIZE - 1) / TILE_SIZE,
+                      (height_ + TILE_SIZE - 1) / TILE_SIZE);
+  const size_t shm_size = TILE_SIZE * TILE_SIZE * sizeof(Scalar);
 
-  CudaArray2DBase_rot90_CW_kernel<<<grid_dim, block_dim, shm_size, stream_>>>(
+  kernel::CudaArray2DBaseRot90_CW<<<grid_dim, block_dim, shm_size, stream_>>>(
       derived(), other);
 
   return other;
@@ -619,26 +637,24 @@ Derived &CudaArray2DBase<Derived>::Rot90_CW(Derived &other) const {
 //------------------------------------------------------------------------------
 
 template <typename Derived>
-Derived &CudaArray2DBase<Derived>::Transpose(Derived &other) const {
+ENABLE_IF_MUTABLE_IMPL inline Derived &CudaArray2DBase<Derived>::Transpose(
+    Derived &other) const {
   // compute down columns; the width should be equal to the width of a CUDA
   // thread warp; the number of rows that each block covers is equal to
   // CudaArray2DBase<Derived>::BLOCK_ROWS
-  const dim3 block_dim = dim3(CudaArray2DBase<Derived>::TILE_SIZE,
-                              CudaArray2DBase<Derived>::BLOCK_ROWS);
-  const dim3 grid_dim =
-      dim3(static_cast<int>(std::ceil(static_cast<float>(width_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE),
-           static_cast<int>(std::ceil(static_cast<float>(height_)) /
-                            CudaArray2DBase<Derived>::TILE_SIZE));
-  const size_t shm_size = CudaArray2DBase<Derived>::TILE_SIZE *
-                          (CudaArray2DBase<Derived>::TILE_SIZE) *
-                          sizeof(Scalar);
+  const dim3 block_dim = dim3(TILE_SIZE, BLOCK_ROWS);
+  const dim3 grid_dim((width_ + TILE_SIZE - 1) / TILE_SIZE,
+                      (height_ + TILE_SIZE - 1) / TILE_SIZE);
+  const size_t shm_size = TILE_SIZE * TILE_SIZE * sizeof(Scalar);
 
-  CudaArray2DBase_transpose_kernel<<<grid_dim, block_dim, shm_size, stream_>>>(
+  kernel::CudaArray2DBaseTranspose<<<grid_dim, block_dim, shm_size, stream_>>>(
       derived(), other);
 
   return other;
 }
+
+#undef ENABLE_IF_MUTABLE
+#undef ENABLE_IF_MUTABLE_IMPL
 
 }  // namespace cua
 
